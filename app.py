@@ -34,12 +34,22 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 {% else %}<a class="btn" href="/login">Conectar Mercado Livre</a>{% endif %}
 </div>
 
+<div class="card"><h2>Preparar oferta de afiliado</h2>
+<p class="muted">Use exatamente os dados que aparecem para você no Mercado Livre.</p>
+<div class="grid">
+<input id="codigoAfiliado" placeholder="Código: ex. JJZBV9-TRU1">
+<input id="linkAfiliado" placeholder="Link: ex. https://meli.la/1fjFTNU">
+</div>
+<button class="btn" onclick="usarAfiliado()">Usar esta oferta</button>
+<p id="statusAfiliado" class="muted"></p>
+</div>
+
 {% if connected %}
-<div class="card"><h2>Consultar produto</h2>
-<p class="muted">Cole o ID do anúncio começando com MLB.</p>
+<div class="card"><h2>Consulta técnica por MLB</h2>
+<p class="muted">Opcional: se você tiver o ID tradicional MLB do anúncio, consulte os dados pela API.</p>
 <form action="/produto" method="get">
 <input name="id" placeholder="Ex.: MLB1234567890" required>
-<button class="btn">Consultar</button>
+<button class="btn">Consultar pela API</button>
 </form></div>
 {% endif %}
 
@@ -50,6 +60,7 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 <input id="agora" placeholder="Preço atual (ex.: 81,75)">
 <input id="desconto" placeholder="Desconto (ex.: 22)">
 </div>
+<input id="codigo" placeholder="Código de afiliado (ex.: JJZBV9-TRU1)">
 <input id="link" placeholder="Seu link de afiliado meli.la">
 <label><input id="frete" type="checkbox" style="width:auto"> Frete grátis</label><br><br>
 <button class="btn" onclick="gerar()">Gerar mensagem</button>
@@ -60,14 +71,29 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 function montar(){
  let n=document.getElementById('nome').value,a=document.getElementById('antes').value,
  p=document.getElementById('agora').value,d=document.getElementById('desconto').value,
- l=document.getElementById('link').value,f=document.getElementById('frete').checked;
+ l=document.getElementById('link').value,c=document.getElementById('codigo').value,f=document.getElementById('frete').checked;
  let t=`🔥 OFERTA!\n\n${n}\n`;
  if(a)t+=`De R$ ${a} `;
  if(p)t+=`por R$ ${p}\n`;
  if(d)t+=`🔻 ${d}% OFF\n`;
  if(f)t+=`🚚 Frete grátis\n`;
- t+=`\n🛒 PEGAR OFERTA:\n${l}\n\n⚠️ Preço e estoque podem mudar.`;
+ if(c)t+=`\n🔍 Código no Mercado Livre: ${c}\n`;
+ if(l)t+=`\n🛒 PEGAR OFERTA:\n${l}\n`;
+ t+=`\n⚠️ Preço e estoque podem mudar.`;
  return t;
+}
+function usarAfiliado(){
+ const c=document.getElementById('codigoAfiliado').value.trim();
+ const l=document.getElementById('linkAfiliado').value.trim();
+ if(!c && !l){document.getElementById('statusAfiliado').textContent='Informe o código ou o link.';return;}
+ if(l && !/^https:\/\/meli\.la\//i.test(l)){
+   document.getElementById('statusAfiliado').textContent='Confira o link: ele deve começar com https://meli.la/';
+   return;
+ }
+ document.getElementById('codigo').value=c;
+ document.getElementById('link').value=l;
+ document.getElementById('statusAfiliado').textContent='✓ Oferta carregada no gerador abaixo.';
+ document.getElementById('nome').scrollIntoView({behavior:'smooth'});
 }
 function gerar(){document.getElementById('saida').textContent=montar();}
 function whatsapp(){window.open('https://wa.me/?text='+encodeURIComponent(montar()),'_blank');}
