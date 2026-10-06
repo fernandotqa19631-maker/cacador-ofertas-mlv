@@ -15,7 +15,7 @@ AUTH_URL = "https://auth.mercadolivre.com.br/authorization"
 TOKEN_URL = "https://api.mercadolibre.com/oauth/token"
 API_URL = "https://api.mercadolibre.com"
 
-PAGE = """
+PAGE = r"""
 <!doctype html><html lang="pt-BR"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Caçador de Ofertas MLV</title>
@@ -40,7 +40,7 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 <input id="codigoAfiliado" placeholder="Código: ex. JJZBV9-TRU1">
 <input id="linkAfiliado" placeholder="Link: ex. https://meli.la/1fjFTNU">
 </div>
-<button class="btn" onclick="usarAfiliado()">Usar esta oferta</button>
+<button type="button" class="btn" onclick="usarAfiliado()">Usar esta oferta</button>
 <p id="statusAfiliado" class="muted"></p>
 </div>
 
@@ -63,8 +63,8 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 <input id="codigo" placeholder="Código de afiliado (ex.: JJZBV9-TRU1)">
 <input id="link" placeholder="Seu link de afiliado meli.la">
 <label><input id="frete" type="checkbox" style="width:auto"> Frete grátis</label><br><br>
-<button class="btn" onclick="gerar()">Gerar mensagem</button>
-<button class="btn" onclick="whatsapp()">Compartilhar no WhatsApp</button>
+<button type="button" class="btn" onclick="gerar()">Gerar mensagem</button>
+<button type="button" class="btn" onclick="whatsapp()">Compartilhar no WhatsApp</button>
 <div id="saida" class="deal" style="margin-top:15px"></div>
 </div>
 <script>
