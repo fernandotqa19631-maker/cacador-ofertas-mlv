@@ -40,9 +40,9 @@ HOME = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta n
 OFFERS = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ofertas</title><style>{{css}}</style></head><body><a href="/">← Voltar</a><h1>🔥 Caçador</h1>
 <div class="card"><b>Diagnóstico real da busca</b><br>
-Categorias: {{diag.categories}} • Rankings lidos: {{diag.rankings}} • Candidatos: {{diag.candidates}} •
+Categorias principais: {{diag.categories}} • Categorias finais: {{diag.leaves}} • Rankings lidos: {{diag.rankings}} • Candidatos: {{diag.candidates}} •
 Resolvidos em anúncios: {{diag.resolved}} • Com preço: {{diag.priced}} • Com desconto identificado: {{diag.promos}} • Frete grátis: {{diag.free}}.
-{% if diag.errors %}<p class="bad">Falhas de API: {{diag.errors}}</p>{% endif %}
+{% if diag.errors %}<p class="bad">Falhas de API: {{diag.errors}} {% if diag.statuses %}• Status: {{diag.statuses}}{% endif %}</p>{% endif %}
 {% if fallback %}<p><b>Nenhum chegou a {{minimum}}% nesta rodada.</b> Estou mostrando os melhores produtos encontrados para você não ficar com tela vazia.</p>{% endif %}
 </div>
 {% for d in deals %}
@@ -166,27 +166,75 @@ def me():
     if st!=200:return redirect("/login")
     return jsonify({k:d.get(k) for k in ("id","nickname","site_id")})
 
+def leaf_categories(root_id, max_leaves=4):
+    """Find a few active leaf categories below a top-level category."""
+    leaves=[]
+    queue=[root_id]
+    visited=set()
+    while queue and len(leaves)<max_leaves:
+        cid=queue.pop(0)
+        if cid in visited: continue
+        visited.add(cid)
+        d,st=api_get("/categories/"+cid)
+        if st!=200 or not d: continue
+        children=d.get("children_categories") or []
+        if not children:
+            leaves.append(cid)
+        else:
+            # Prefer branches with more listings.
+            children=sorted(children,key=lambda x:x.get("total_items_in_this_category",0),reverse=True)
+            queue.extend([x["id"] for x in children[:5] if x.get("id")])
+    return leaves
+
 @app.get("/ofertas")
 def ofertas():
-    if not session.get("access_token"):return redirect("/login")
-    try: minimum=int(request.args.get("min","20"))
+    if not session.get("access_token"): return redirect("/login")
+    try: minimum=max(0,min(90,int(request.args.get("min","20"))))
     except: minimum=20
-    diag={"categories":0,"rankings":0,"candidates":0,"resolved":0,"priced":0,"promos":0,"free":0,"errors":0}
+
+    diag={"categories":0,"leaves":0,"rankings":0,"candidates":0,"resolved":0,
+          "priced":0,"promos":0,"free":0,"errors":0,"statuses":{}}
+
+    # Official Brazil category tree. No category predictor dependency.
+    roots,st=api_get("/sites/MLB/categories")
+    if st!=200 or not isinstance(roots,list):
+        diag["errors"]+=1
+        diag["statuses"]["/sites/MLB/categories"]=st
+        return render_template_string(OFFERS,css=CSS,deals=[],diag=diag,minimum=minimum,fallback=False)
+
+    # Focus on shopping categories suitable for affiliate deals.
+    wanted={"MLB5672","MLB1246","MLB1574","MLB1051","MLB5726","MLB1000",
+            "MLB1276","MLB263532","MLB1144","MLB1648","MLB1132","MLB264586"}
+    roots=[r for r in roots if r.get("id") in wanted]
+    diag["categories"]=len(roots)
+
+    leafs=[]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        fs={pool.submit(leaf_categories,r["id"],3):r["id"] for r in roots}
+        for f in as_completed(fs):
+            try: leafs.extend(f.result())
+            except Exception: diag["errors"]+=1
+    # dedupe
+    leafs=list(dict.fromkeys(leafs))
+    diag["leaves"]=len(leafs)
+
     entries=[];seen=set()
-    for term in TERMS:
-        cat=category(term)
-        if not cat:diag["errors"]+=1;continue
-        diag["categories"]+=1
-        h,st=api_get(f"/highlights/MLB/category/{cat}")
-        if st!=200 or not h:diag["errors"]+=1;continue
+    for cid in leafs[:30]:
+        h,hst=api_get(f"/highlights/MLB/category/{cid}")
+        if hst!=200 or not h:
+            diag["errors"]+=1
+            diag["statuses"][str(hst)]=diag["statuses"].get(str(hst),0)+1
+            continue
         diag["rankings"]+=1
-        for e in (h.get("content") or [])[:10]:
+        for e in (h.get("content") or [])[:8]:
             key=e.get("id")
-            if key and key not in seen:seen.add(key);entries.append(e)
+            if key and key not in seen:
+                seen.add(key);entries.append(e)
     diag["candidates"]=len(entries)
+
     raw=[]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        fs=[pool.submit(resolve,e) for e in entries[:80]]
+        fs=[pool.submit(resolve,e) for e in entries[:100]]
         for f in as_completed(fs):
             try:
                 d=f.result()
@@ -195,8 +243,8 @@ def ofertas():
                     if d["discount"]>0:diag["promos"]+=1
                     if d["free_shipping"]:diag["free"]+=1
                     raw.append(d)
-            except Exception:diag["errors"]+=1
-    # dedupe final item ids
+            except Exception: diag["errors"]+=1
+
     uniq={d["item_id"]:d for d in raw}
     raw=list(uniq.values())
     chosen=[d for d in raw if d["discount"]>=minimum]
