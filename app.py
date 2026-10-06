@@ -129,8 +129,13 @@ img{width:150px;height:150px;object-fit:contain;float:left;margin-right:16px}.pr
 .clear{clear:both}.muted{color:#666}textarea{width:100%;box-sizing:border-box;min-height:150px;margin-top:10px;padding:10px}
 </style></head><body>
 <a href="/">← Voltar</a><h1>🔥 Ofertas encontradas</h1>
-<p class="muted">Produtos populares do Mercado Livre. Preços podem mudar a qualquer momento.</p>
-{% if not deals %}<div class="card">Nenhuma oferta com {{ minimum }}% ou mais foi encontrada nesta rodada. Tente 10%.</div>{% endif %}
+<p class="muted">Combina tendências semanais e mais vendidos. Preços podem mudar a qualquer momento.</p>
+<div class="card"><b>Diagnóstico da busca</b><br>
+{{ diagnostics.candidatos }} candidatos encontrados • {{ diagnostics.analisados }} produtos analisados •
+{{ diagnostics.com_promocao }} com desconto identificado • {{ diagnostics.com_frete }} com frete grátis.
+{% if fallback %}<p><b>Nenhum chegou a {{ minimum }}% nesta rodada.</b> Para não deixar a tela vazia, abaixo estão os melhores produtos analisados, inclusive sem desconto identificado.</p>{% endif %}
+</div>
+{% if not deals %}<div class="card">A API não devolveu produtos utilizáveis nesta rodada. Use o diagnóstico acima para identificar onde a busca parou.</div>{% endif %}
 {% for d in deals %}
 <div class="card">
 {% if d.image %}<img src="{{ d.image }}">{% endif %}
@@ -283,7 +288,12 @@ def product_to_deal(entry):
         return None
     price = d.get("price")
     old = d.get("original_price")
-    # Prefer the current prices endpoint when available.
+    # Official current sale price for marketplace context.
+    sp = get_json(API_URL + f"/items/{eid}/sale_price", {"context": "channel_marketplace"})
+    if sp:
+        price = sp.get("amount") or price
+        old = sp.get("regular_amount") or old
+    # Also inspect all valid prices as a fallback.
     pd = get_json(API_URL + f"/items/{eid}/prices")
     if pd and pd.get("prices"):
         prices = pd["prices"]
@@ -312,38 +322,69 @@ def ofertas():
     except ValueError:
         minimum = 20
 
-    entries = []
-    seen = set()
-    # Discover a relevant leaf category for each theme, then ask Mercado Livre for its best sellers.
+    entries, seen = [], set()
+    diagnostics = {"categorias":0, "candidatos":0, "analisados":0, "com_promocao":0, "com_frete":0}
+
+    # 1) Best sellers from broad themes.
     for term in HUNT_TERMS:
         cat = category_for(term)
         if not cat:
             continue
+        diagnostics["categorias"] += 1
         h = get_json(API_URL + f"/highlights/MLB/category/{cat}")
         if not h:
             continue
-        for e in (h.get("content") or [])[:3]:
-            if e.get("id") not in seen:
-                seen.add(e.get("id"))
-                entries.append(e)
+        for e in (h.get("content") or [])[:6]:
+            eid=e.get("id")
+            if eid and eid not in seen:
+                seen.add(eid); entries.append(e)
 
-    deals = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(product_to_deal, e) for e in entries]
+    # 2) Weekly trends: discover categories from popular searches and add their best sellers.
+    trends = get_json(API_URL + "/trends/MLB")
+    if isinstance(trends, list):
+        for t in trends[:12]:
+            kw=t.get("keyword")
+            if not kw: continue
+            cat=category_for(kw)
+            if not cat: continue
+            h=get_json(API_URL + f"/highlights/MLB/category/{cat}")
+            if not h: continue
+            for e in (h.get("content") or [])[:3]:
+                eid=e.get("id")
+                if eid and eid not in seen:
+                    seen.add(eid); entries.append(e)
+
+    diagnostics["candidatos"]=len(entries)
+    raw=[]
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures=[ex.submit(product_to_deal,e) for e in entries[:80]]
         for f in as_completed(futures):
             try:
-                d = f.result()
-                if not d:
-                    continue
-                old, price = d.get("old"), d.get("price")
-                d["discount"] = round((old-price)/old*100) if old and price and old > price else 0
-                if d["discount"] >= minimum:
-                    deals.append(d)
+                d=f.result()
+                if not d: continue
+                diagnostics["analisados"] += 1
+                old,price=d.get("old"),d.get("price")
+                d["discount"]=round((old-price)/old*100) if old and price and old>price else 0
+                if d["discount"]>0: diagnostics["com_promocao"] += 1
+                if d.get("free_shipping"): diagnostics["com_frete"] += 1
+                raw.append(d)
             except Exception:
                 pass
 
-    deals.sort(key=lambda x: (x.get("discount",0), x.get("free_shipping",False)), reverse=True)
-    return render_template_string(OFFERS_PAGE, deals=deals[:20], minimum=minimum)
+    filtered=[d for d in raw if d["discount"]>=minimum]
+    filtered.sort(key=lambda x:(x["discount"],x.get("free_shipping",False),-(x.get("position") or 999)),reverse=True)
+
+    # If the requested discount yields nothing, show the analyzed products instead of a blank screen.
+    fallback=False
+    deals=filtered
+    if not deals:
+        fallback=True
+        deals=sorted(raw,key=lambda x:(x["discount"],x.get("free_shipping",False),-(x.get("position") or 999)),reverse=True)[:20]
+    else:
+        deals=deals[:30]
+
+    return render_template_string(OFFERS_PAGE,deals=deals,minimum=minimum,
+                                  diagnostics=diagnostics,fallback=fallback)
 
 @app.get("/produto")
 def produto():
