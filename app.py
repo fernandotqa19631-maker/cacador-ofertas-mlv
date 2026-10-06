@@ -32,7 +32,7 @@ HOME = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta n
 <div class="card"><h1>🔎 Caçador de Ofertas MLV</h1>
 {% if connected %}<p class="ok">✓ Mercado Livre conectado</p>
 <form action="/ofertas"><label>Desconto mínimo</label><select name="min"><option>0</option><option>10</option><option selected>20</option><option>30</option><option>40</option></select>
-<button class="btn">🔥 Caçar ofertas agora</button></form>
+<button class="btn">🔥 Caçar ofertas agora</button></form><p style="margin-top:12px"><a href="/diagnostico-api" target="_blank">🩺 Ver diagnóstico da API</a></p>
 {% else %}<a class="btn" href="/login">Conectar Mercado Livre</a>{% endif %}</div>
 <div class="card"><h2>Oferta de afiliado</h2><p class="muted">Quando escolher um produto, gere seu link no Mercado Livre e cole no card da oferta. O restante é preenchido automaticamente.</p></div>
 </body></html>"""
@@ -165,6 +165,33 @@ def me():
     d,st=api_get("/users/me")
     if st!=200:return redirect("/login")
     return jsonify({k:d.get(k) for k in ("id","nickname","site_id")})
+
+def api_debug(path):
+    token=session.get("access_token")
+    try:
+        r=requests.get(API+path,headers={"Authorization":"Bearer "+token},timeout=15)
+        try:
+            body=r.json()
+        except Exception:
+            body={"raw":(r.text or "")[:500]}
+        # Keep only useful API error fields; never return request headers/token.
+        if isinstance(body,dict):
+            safe={k:body.get(k) for k in ("message","error","status","cause","code") if k in body}
+            if not safe: safe={"response":str(body)[:500]}
+        else:
+            safe={"response":str(body)[:500]}
+        return r.status_code,safe
+    except Exception as e:
+        return 0,{"error":type(e).__name__}
+
+@app.get("/diagnostico-api")
+def diagnostico_api():
+    if not session.get("access_token"): return redirect("/login")
+    tests={}
+    for path in ("/users/me","/sites/MLB/categories"):
+        st,body=api_debug(path)
+        tests[path]={"http":st,"mercado_livre":body}
+    return jsonify(tests)
 
 def leaf_categories(root_id, max_leaves=4):
     """Find a few active leaf categories below a top-level category."""
