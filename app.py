@@ -1,4 +1,5 @@
 import os, secrets
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
 import requests
 from flask import Flask, redirect, request, session, render_template_string, jsonify
@@ -33,6 +34,22 @@ h1{margin-bottom:6px}.btn{display:inline-block;background:#ffe600;color:#222;pad
 <a class="btn" href="/me">Testar conexão</a>
 {% else %}<a class="btn" href="/login">Conectar Mercado Livre</a>{% endif %}
 </div>
+
+{% if connected %}
+<div class="card">
+<h2>🔥 Caçar ofertas automaticamente</h2>
+<p class="muted">Busca produtos populares em várias categorias e prioriza os que estão com desconto.</p>
+<form action="/ofertas" method="get">
+<label>Desconto mínimo</label>
+<select name="min" style="width:100%;padding:12px;margin:7px 0;border:1px solid #ccc;border-radius:9px">
+<option value="10">10% ou mais</option>
+<option value="20" selected>20% ou mais</option>
+<option value="30">30% ou mais</option>
+</select>
+<button class="btn">🔎 Caçar ofertas</button>
+</form>
+</div>
+{% endif %}
 
 <div class="card"><h2>Preparar oferta de afiliado</h2>
 <p class="muted">Use exatamente os dados que aparecem para você no Mercado Livre.</p>
@@ -97,6 +114,55 @@ function usarAfiliado(){
 }
 function gerar(){document.getElementById('saida').textContent=montar();}
 function whatsapp(){window.open('https://wa.me/?text='+encodeURIComponent(montar()),'_blank');}
+</script></body></html>
+"""
+
+OFFERS_PAGE = r"""
+<!doctype html><html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ofertas encontradas</title>
+<style>
+body{font-family:Arial;max-width:1000px;margin:auto;padding:16px;background:#f5f5f5;color:#222}
+.card{background:#fff;border-radius:16px;padding:16px;margin:14px 0;box-shadow:0 2px 10px #0001}
+img{width:150px;height:150px;object-fit:contain;float:left;margin-right:16px}.price{font-size:24px;font-weight:bold}
+.old{text-decoration:line-through;color:#777}.off{font-weight:bold;color:#08783e}.btn{display:inline-block;background:#ffe600;color:#222;padding:11px 14px;border-radius:9px;text-decoration:none;font-weight:bold;border:0;margin:4px}
+.clear{clear:both}.muted{color:#666}textarea{width:100%;box-sizing:border-box;min-height:150px;margin-top:10px;padding:10px}
+</style></head><body>
+<a href="/">← Voltar</a><h1>🔥 Ofertas encontradas</h1>
+<p class="muted">Produtos populares do Mercado Livre. Preços podem mudar a qualquer momento.</p>
+{% if not deals %}<div class="card">Nenhuma oferta com {{ minimum }}% ou mais foi encontrada nesta rodada. Tente 10%.</div>{% endif %}
+{% for d in deals %}
+<div class="card">
+{% if d.image %}<img src="{{ d.image }}">{% endif %}
+<h3>{{ d.title }}</h3>
+{% if d.old %}<div class="old">De R$ {{ "%.2f"|format(d.old) }}</div>{% endif %}
+<div class="price">R$ {{ "%.2f"|format(d.price) }}</div>
+{% if d.discount %}<div class="off">🔻 {{ d.discount }}% OFF</div>{% endif %}
+{% if d.free_shipping %}<div>🚚 Frete grátis</div>{% endif %}
+<p>🏆 Popular na categoria: posição {{ d.position }}</p>
+<a class="btn" target="_blank" href="{{ d.permalink }}">Abrir produto</a>
+<button class="btn" type="button" onclick='msg({{ d|tojson }}, {{ loop.index }})'>Preparar mensagem</button>
+<div class="clear"></div>
+<textarea id="m{{ loop.index }}" style="display:none"></textarea>
+<button id="w{{ loop.index }}" class="btn" style="display:none" type="button" onclick="zap({{ loop.index }})">WhatsApp</button>
+</div>
+{% endfor %}
+<script>
+function br(v){return Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function msg(d,i){
+ let t='🔥 OFERTA!\\n\\n'+d.title+'\\n';
+ if(d.old)t+='De R$ '+br(d.old)+' por R$ '+br(d.price)+'\\n';
+ else t+='Por R$ '+br(d.price)+'\\n';
+ if(d.discount)t+='🔻 '+d.discount+'% OFF\\n';
+ if(d.free_shipping)t+='🚚 Frete grátis\\n';
+ t+='\\n⚠️ Agora gere/cole seu link de afiliado do Mercado Livre antes de divulgar.\\n';
+ let a=document.getElementById('m'+i);a.value=t;a.style.display='block';
+ document.getElementById('w'+i).style.display='inline-block';
+}
+function zap(i){
+ let a=document.getElementById('m'+i);
+ window.open('https://wa.me/?text='+encodeURIComponent(a.value),'_blank');
+}
 </script></body></html>
 """
 
@@ -165,6 +231,119 @@ def me():
     if not r.ok: return jsonify({"erro":"Não foi possível consultar a conta","status":r.status_code}), r.status_code
     data = r.json()
     return jsonify({k:data.get(k) for k in ("id","nickname","site_id")})
+
+
+HUNT_TERMS = ["celular", "notebook", "smart tv", "cafeteira", "ferramentas", "games", "beleza", "autopeças"]
+
+def auth_headers():
+    return {"Authorization": f"Bearer {session.get('access_token','')}"}
+
+def get_json(url, params=None):
+    try:
+        r = requests.get(url, headers=auth_headers(), params=params, timeout=15)
+        return r.json() if r.ok else None
+    except requests.RequestException:
+        return None
+
+def category_for(term):
+    data = get_json(API_URL + "/sites/MLB/domain_discovery/search", {"q": term, "limit": 1})
+    if isinstance(data, list) and data:
+        return data[0].get("category_id")
+    return None
+
+def product_to_deal(entry):
+    eid = entry.get("id")
+    pos = entry.get("position")
+    typ = entry.get("type")
+    if not eid:
+        return None
+
+    if typ == "PRODUCT" or (eid.startswith("MLB") and not eid[3:].isdigit()):
+        d = get_json(API_URL + f"/products/{eid}")
+        if not d:
+            return None
+        winner = d.get("buy_box_winner") or {}
+        price = winner.get("price")
+        old = winner.get("original_price")
+        if not price:
+            return None
+        pics = d.get("pictures") or []
+        image = pics[0].get("url") if pics else None
+        return {
+            "id": winner.get("item_id") or eid,
+            "title": d.get("name") or d.get("family_name") or eid,
+            "price": price, "old": old,
+            "free_shipping": (winner.get("shipping") or {}).get("free_shipping", False),
+            "permalink": d.get("permalink") or "",
+            "image": image, "position": pos
+        }
+
+    d = get_json(API_URL + f"/items/{eid}")
+    if not d:
+        return None
+    price = d.get("price")
+    old = d.get("original_price")
+    # Prefer the current prices endpoint when available.
+    pd = get_json(API_URL + f"/items/{eid}/prices")
+    if pd and pd.get("prices"):
+        prices = pd["prices"]
+        promo = next((x for x in prices if x.get("type") == "promotion" and not (x.get("conditions") or {}).get("context_restrictions")), None)
+        standard = next((x for x in prices if x.get("type") == "standard" and not (x.get("conditions") or {}).get("context_restrictions")), None)
+        if promo:
+            price = promo.get("amount") or price
+            old = promo.get("regular_amount") or (standard or {}).get("amount") or old
+        elif standard:
+            price = standard.get("amount") or price
+    if not price:
+        return None
+    return {
+        "id": eid, "title": d.get("title") or eid, "price": price, "old": old,
+        "free_shipping": (d.get("shipping") or {}).get("free_shipping", False),
+        "permalink": d.get("permalink") or "",
+        "image": d.get("thumbnail"), "position": pos
+    }
+
+@app.get("/ofertas")
+def ofertas():
+    if not session.get("access_token"):
+        return redirect("/login")
+    try:
+        minimum = max(0, min(90, int(request.args.get("min", "20"))))
+    except ValueError:
+        minimum = 20
+
+    entries = []
+    seen = set()
+    # Discover a relevant leaf category for each theme, then ask Mercado Livre for its best sellers.
+    for term in HUNT_TERMS:
+        cat = category_for(term)
+        if not cat:
+            continue
+        h = get_json(API_URL + f"/highlights/MLB/category/{cat}")
+        if not h:
+            continue
+        for e in (h.get("content") or [])[:3]:
+            if e.get("id") not in seen:
+                seen.add(e.get("id"))
+                entries.append(e)
+
+    deals = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = [ex.submit(product_to_deal, e) for e in entries]
+        for f in as_completed(futures):
+            try:
+                d = f.result()
+                if not d:
+                    continue
+                old, price = d.get("old"), d.get("price")
+                d["discount"] = round((old-price)/old*100) if old and price and old > price else 0
+                if d["discount"] >= minimum:
+                    deals.append(d)
+            except Exception:
+                pass
+
+    deals.sort(key=lambda x: (x.get("discount",0), x.get("free_shipping",False)), reverse=True)
+    return render_template_string(OFFERS_PAGE, deals=deals[:20], minimum=minimum)
 
 @app.get("/produto")
 def produto():
