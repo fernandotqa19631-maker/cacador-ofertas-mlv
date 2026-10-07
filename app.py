@@ -188,7 +188,19 @@ def api_debug(path):
 def diagnostico_api():
     if not session.get("access_token"): return redirect("/login")
     tests={}
-    for path in ("/users/me","/sites/MLB/categories"):
+    # Read-only probes only. No data is created/changed.
+    paths=(
+        "/users/me",
+        "/sites/MLB/categories",
+        "/sites/MLB/domain_discovery/search?limit=1&q=celular",
+        "/sites/MLB/search?q=celular&limit=1",
+        "/highlights/MLB/category/MLB1051",
+        "/categories/MLB1051",
+        "/items/MLB3733067613",
+        "/items/MLB3733067613/sale_price?context=channel_marketplace",
+        "/products/search?site_id=MLB&q=celular&limit=1",
+    )
+    for path in paths:
         st,body=api_debug(path)
         tests[path]={"http":st,"mercado_livre":body}
     return jsonify(tests)
