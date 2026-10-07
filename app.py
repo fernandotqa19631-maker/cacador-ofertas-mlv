@@ -124,32 +124,63 @@ def item_details(item_id, position, source):
       "image":image,"position":position or 999,"source":source}
 
 def resolve(entry):
-    eid,typ,pos=entry.get("id",""),entry.get("type",""),entry.get("position",999)
-    # MLBU in highlights may appear even when type is ITEM; resolve it as User Product.
-    if eid.startswith("MLBU") or typ=="USER_PRODUCT":
-        up,st=api_get("/user-products/"+eid)
-        if st!=200 or not up: return None
-        seller=up.get("user_id")
-        if not seller: return None
-        sr,st=api_get(f"/users/{seller}/items/search",{"user_product_id":eid,"limit":10})
-        if st!=200 or not sr: return None
-        ids=sr.get("results") or []
-        for iid in ids:
-            got=item_details(iid,pos,"USER_PRODUCT")
-            if got: return got
-        return None
+    """Turn a highlight result into a shareable Mercado Livre product/deal."""
+    eid=entry.get("id","")
+    typ=entry.get("type","")
+    pos=entry.get("position",999)
+
     if typ=="PRODUCT":
         pd,st=api_get("/products/"+eid)
-        if st==200 and pd:
-            winner=pd.get("buy_box_winner") or {}
-            iid=winner.get("item_id")
+        if st!=200 or not pd:
+            return None
+
+        winner=pd.get("buy_box_winner") or {}
+        current=winner.get("price")
+        regular=winner.get("original_price")
+        disc=discount_pct(current,regular)
+        shipping=winner.get("shipping") or {}
+        pics=pd.get("pictures") or []
+        picture=""
+        if pics:
+            picture=pics[0].get("secure_url") or pics[0].get("url") or pics[0].get("id","")
+            if picture and not str(picture).startswith("http"):
+                picture=f"https://http2.mlstatic.com/D_{picture}-O.jpg"
+
+        # A PRODUCT page is itself a valid Mercado Livre product link.
+        # This is useful even when the current buy-box winner is unavailable.
+        permalink=pd.get("permalink")
+        iid=winner.get("item_id") or eid
+        if not permalink:
+            return None
+
+        return {
+            "item_id":iid,
+            "title":pd.get("name") or pd.get("family_name") or eid,
+            "price":money_value(current) or 0,
+            "regular_price":money_value(regular),
+            "discount":disc,
+            "free_shipping":bool(shipping.get("free_shipping")),
+            "thumbnail":picture,
+            "permalink":permalink,
+            "position":pos,
+            "source":"PRODUCT",
+            "seller_id":winner.get("seller_id"),
+        }
+
+    if eid.startswith("MLBU") or typ=="USER_PRODUCT":
+        up,st=api_get("/user-products/"+eid)
+        if st!=200 or not up:
+            return None
+        # Some UP responses expose item ids directly.
+        ids=up.get("item_ids") or up.get("items") or []
+        for x in ids:
+            iid=x.get("id") if isinstance(x,dict) else x
             if iid:
-                got=item_details(iid,pos,"PRODUCT")
-                if got: return got
-        # Some highlight PRODUCT ids can still be resolvable as items.
-        if eid.startswith("MLB"):
-            return item_details(eid,pos,"PRODUCT")
+                got=item_details(iid,pos,"USER_PRODUCT")
+                if got:
+                    return got
         return None
+
     return item_details(eid,pos,"ITEM")
 
 @app.get("/")
