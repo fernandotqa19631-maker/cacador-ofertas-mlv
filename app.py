@@ -323,6 +323,36 @@ def teste_produto_real():
         out["response_preview"]=str(pd)[:1000]
     return jsonify(out)
 
+@app.get("/teste-catalogo-real")
+def teste_catalogo_real():
+    if not session.get("access_token"):
+        return redirect("/login")
+
+    pid="MLB54982411"
+    tests=[
+        f"/items/search?catalog_product_id={pid}&limit=3",
+        f"/users/me/items/search?catalog_product_id={pid}&limit=3",
+        f"/products/{pid}/items",
+        f"/products/{pid}/items?limit=3",
+    ]
+    out={}
+    for path in tests:
+        data,st=api_get(path)
+        row={"http":st,"type":type(data).__name__}
+        if isinstance(data,dict):
+            row["keys"]=sorted(data.keys())
+            if "results" in data:
+                row["results"]=(data.get("results") or [])[:3]
+            if "message" in data: row["message"]=data.get("message")
+            if "error" in data: row["error"]=data.get("error")
+        elif isinstance(data,list):
+            row["count"]=len(data)
+            row["preview"]=data[:3]
+        else:
+            row["preview"]=str(data)[:500]
+        out[path]=row
+    return jsonify(out)
+
 @app.get("/ofertas")
 def ofertas():
     if not session.get("access_token"): return redirect("/login")
