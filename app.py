@@ -95,6 +95,18 @@ def category(term):
     d,st=api_get("/sites/MLB/domain_discovery/search",{"q":term,"limit":1})
     return (d[0].get("category_id") if st==200 and isinstance(d,list) and d else None)
 
+def money_value(v):
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+def discount_pct(current, regular):
+    current, regular = money_value(current), money_value(regular)
+    if not current or not regular or regular <= current:
+        return 0
+    return round((regular-current)*100/regular)
+
 def item_details(item_id, position, source):
     d,st=api_get("/items/"+item_id)
     if st!=200 or not d: return None
@@ -205,7 +217,7 @@ def diagnostico_api():
         tests[path]={"http":st,"mercado_livre":body}
     return jsonify(tests)
 
-def leaf_categories(root_id, max_leaves=4):
+def leaf_categories(root_id, max_leaves=3):
     """Find a few active leaf categories below a top-level category."""
     leaves=[]
     queue=[root_id]
