@@ -300,6 +300,25 @@ def teste_produto_real():
             out["item_id"]=winner.get("item_id")
             out["price"]=winner.get("price")
             out["original_price"]=winner.get("original_price")
+
+        children=pd.get("children_ids") or []
+        out["children_ids"]=children[:10]
+        if children:
+            child_id=children[0]
+            child, cst=api_get("/products/"+child_id)
+            out["child_product_id"]=child_id
+            out["child_http"]=cst
+            if isinstance(child,dict):
+                out["child_keys"]=sorted(child.keys())
+                out["child_name"]=child.get("name")
+                out["child_permalink"]=child.get("permalink")
+                cw=child.get("buy_box_winner")
+                out["child_buy_box_winner_type"]=type(cw).__name__
+                if isinstance(cw,dict):
+                    out["child_buy_box_winner_keys"]=sorted(cw.keys())
+                    out["child_item_id"]=cw.get("item_id")
+                    out["child_price"]=cw.get("price")
+                    out["child_original_price"]=cw.get("original_price")
     else:
         out["response_preview"]=str(pd)[:1000]
     return jsonify(out)
