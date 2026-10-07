@@ -259,18 +259,13 @@ def ofertas():
     roots=[r for r in roots if r.get("id") in wanted]
     diag["categories"]=len(roots)
 
-    leafs=[]
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        fs={pool.submit(leaf_categories,r["id"],3):r["id"] for r in roots}
-        for f in as_completed(fs):
-            try: leafs.extend(f.result())
-            except Exception: diag["errors"]+=1
-    # dedupe
-    leafs=list(dict.fromkeys(leafs))
+    # Rankings work directly on the top-level categories for this application.
+    # Using them directly avoids the child-category calls that caused 12/12 failures.
+    leafs=[r["id"] for r in roots if r.get("id")]
     diag["leaves"]=len(leafs)
 
     entries=[];seen=set()
-    for cid in leafs[:30]:
+    for cid in leafs:
         h,hst=api_get(f"/highlights/MLB/category/{cid}")
         if hst!=200 or not h:
             diag["errors"]+=1
