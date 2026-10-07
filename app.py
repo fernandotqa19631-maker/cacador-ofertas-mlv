@@ -268,6 +268,42 @@ def leaf_categories(root_id, max_leaves=3):
             queue.extend([x["id"] for x in children[:5] if x.get("id")])
     return leaves
 
+@app.get("/teste-produto-real")
+def teste_produto_real():
+    if not session.get("access_token"):
+        return redirect("/login")
+
+    h,st=api_get("/highlights/MLB/category/MLB1051")
+    if st!=200 or not isinstance(h,dict):
+        return jsonify({"etapa":"highlights","http":st,"resposta":h}), st or 500
+
+    product=next((x for x in (h.get("content") or []) if x.get("type")=="PRODUCT" and x.get("id")),None)
+    if not product:
+        return jsonify({"etapa":"highlights","erro":"Nenhum PRODUCT encontrado"}),404
+
+    pid=product["id"]
+    pd,pst=api_get("/products/"+pid)
+
+    out={
+        "product_id":pid,
+        "product_http":pst,
+        "product_type":type(pd).__name__,
+    }
+    if isinstance(pd,dict):
+        out["product_keys"]=sorted(pd.keys())
+        out["name"]=pd.get("name")
+        out["permalink"]=pd.get("permalink")
+        winner=pd.get("buy_box_winner")
+        out["buy_box_winner_type"]=type(winner).__name__
+        if isinstance(winner,dict):
+            out["buy_box_winner_keys"]=sorted(winner.keys())
+            out["item_id"]=winner.get("item_id")
+            out["price"]=winner.get("price")
+            out["original_price"]=winner.get("original_price")
+    else:
+        out["response_preview"]=str(pd)[:1000]
+    return jsonify(out)
+
 @app.get("/ofertas")
 def ofertas():
     if not session.get("access_token"): return redirect("/login")
